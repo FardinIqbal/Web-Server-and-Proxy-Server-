@@ -1,8 +1,4 @@
-# CSE 310 - Programming Assignment 1
-
 ## Simple Web Server & HTTP Proxy Server
-
-### Spring 2025
 
 ## Table of Contents
 
@@ -23,7 +19,7 @@
 
 ## Introduction
 
-This assignment consists of implementing:
+This project consists of implementing:
 
 1. A simple **web server** that serves files over HTTP (Part A).
 2. A **proxy server** that forwards HTTP requests and caches responses (Part B).
@@ -166,6 +162,4 @@ No external libraries (like Flask) were used.
 
   A hard refresh forces the browser to bypass its local cache and request the page directly through your proxy server.
 
-**CSE 310 - Spring 2025**  
 **Prepared by: [Fardin Iqbal]**
-**SBU-ID: [114866279]**
