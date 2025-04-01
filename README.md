@@ -24,7 +24,7 @@ This project consists of implementing:
 1. A simple **web server** that serves files over HTTP (Part A).
 2. A **proxy server** that forwards HTTP requests and caches responses (Part B).
 
-Both programs use **Python socket programming** without external web frameworks (e.g., Flask is not allowed).
+Both programs use **Python socket programming** without external web frameworks (e.g., Flask is not used).
 
 ---
 
