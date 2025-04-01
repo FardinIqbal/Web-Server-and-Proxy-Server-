@@ -142,7 +142,7 @@ If you want to force the proxy to **fetch a fresh copy**, use:
 
 ## Libraries Used
 
-The assignment **only allows standard Python libraries**, and the following were used:
+**Only standard Python libraries**, and the following were used:
 
 - `socket` → To create TCP connections for both the web server and proxy server.
 - `os` → To handle file operations for caching and file serving.
