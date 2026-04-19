@@ -1,165 +1,201 @@
-## Simple Web Server & HTTP Proxy Server
+# HTTP Server & Proxy
 
-## Table of Contents
+HTTP web server and caching proxy built from scratch with raw sockets. No external libraries, no frameworks, no HTTP parsers — just Python's standard `socket` module and hand-rolled HTTP/1.1 parsing.
 
-1. [Introduction](#introduction)
-2. [Files Included](#files-included)
-3. [Part A: Web Server](#part-a-web-server)
-    - [How It Works](#how-it-works)
-    - [How to Run](#how-to-run)
-    - [Testing the Web Server](#testing-the-web-server)
-4. [Part B: Proxy Server](#part-b-proxy-server)
-    - [How It Works](#how-it-works-1)
-    - [How to Run](#how-to-run-1)
-    - [Testing the Proxy Server](#testing-the-proxy-server)
-    - [Clearing Cache](#clearing-cache)
-5. [Libraries Used](#libraries-used)
+- 2 servers: origin web server + forwarding caching proxy
+- 0 external dependencies (standard library only: `socket`, `os`, `mimetypes`)
+- ~250 LOC across both programs
+- Feb - Mar 2025 | CSE 310, Stony Brook University
 
 ---
 
-## Introduction
+## What it is
 
-This project consists of implementing:
+Two cooperating Python programs that implement the HTTP/1.1 request/response cycle at the socket layer:
 
-1. A simple **web server** that serves files over HTTP (Part A).
-2. A **proxy server** that forwards HTTP requests and caches responses (Part B).
+1. **`webserver.py`** — origin server. Listens on `127.0.0.1:6789`, parses incoming `GET` requests, resolves paths against the working directory, detects MIME types, and streams file bytes back with a valid HTTP response. Returns `404 Not Found` for missing files.
 
-Both programs use **Python socket programming** without external web frameworks (e.g., Flask is not used).
+2. **`proxyserver.py`** — forwarding HTTP proxy with on-disk cache. Listens on `127.0.0.1:8888`, accepts absolute-URI `GET` requests from a configured client, extracts hostname and path, opens a new TCP socket to the origin on port 80, forwards the request, caches the response to `cache/`, and returns it. Subsequent requests for the same URL are served from cache without touching the network.
 
----
-
-## Files Included
-
-- `webserver.py`  → Web server implementation (Part A)
-- `proxyserver.py` → Proxy server implementation (Part B)
-- `clients_screenshots.pdf` → Screenshots of successful test cases
-- `README.md` → This documentation
-- Example test files:
-    - `HelloWorld.html` → Test file for the web server
-    - Sample image files (`.png`, `.jpeg`) for additional testing
+Everything lives below the `http.server` / `urllib` abstractions. Request lines are tokenized by hand. Response headers are concatenated strings. Sockets are opened, bound, listened, accepted, and closed explicitly.
 
 ---
 
-## Part A: Web Server
+## Key features
 
-### How It Works
+### Raw socket programming
+- `socket.AF_INET` + `socket.SOCK_STREAM` (TCP/IPv4)
+- `SO_REUSEADDR` to avoid `Address already in use` on restart
+- Explicit `bind` / `listen(5)` / `accept` loop
+- `recv` with fixed buffer (1024 B for server, 4096 B for proxy)
+- `sendall` for complete response delivery
+- `settimeout(10)` on upstream connections to prevent hangs
 
-- The web server listens on **localhost (127.0.0.1) at port 6789**.
-- It accepts incoming HTTP GET requests and serves **HTML, text, and image files** from the same directory.
-- If a requested file is **found**, it responds with a **200 OK** status and the file content.
-- If the file is **not found**, it returns a **404 Not Found** error with a simple HTML response.
+### HTTP/1.1 parsing (hand-rolled)
+- Split request on `\r\n`, tokenize request line into method + URI + version
+- Validate method is `GET` before processing
+- Strip `http://` scheme, split host from path on first `/`
+- Reject HTTPS and relative URIs (proxy)
+- Construct response headers as formatted strings with `Content-Type`, `Content-Length`, `Connection: close`
 
-### How to Run
+### MIME type detection
+- `mimetypes.guess_type` maps extensions to types (HTML, text, PNG, JPEG)
+- Falls back to `application/octet-stream` for unknown types
+- Binary-safe file reads (`rb`) for images and binary assets
 
-1. Place `webserver.py` in a directory containing `HelloWorld.html` and other test files.
-2. Run the server:
-   ```sh
-   python3 webserver.py
-   ```
-3. The server will start and listen on **http://127.0.0.1:6789**.
+### Proxy cache
+- Cache key derived from URL with `/` replaced by `_` (e.g. `gaia.cs.umass.edu_wireshark-labs_HTTP-wireshark-file2.html`)
+- `cache/` directory created on startup if missing
+- Cache HIT: read from disk, send directly to client, skip upstream fetch
+- Cache MISS: fetch from origin, persist raw bytes, forward to client
+- Cache bypass via `Cache-Control: no-cache` header or browser hard refresh
 
-### Testing the Web Server
-
-- Open a web browser and go to:
-  ```
-  http://127.0.0.1:6789/HelloWorld.html
-  ```
-  The page should load successfully if the file exists.
-- If the file is missing, you will see a **404 Not Found** error.
-- You can also use `curl`:
-  ```sh
-  curl -i http://127.0.0.1:6789/HelloWorld.html
-  ```
-  This should return an HTTP response with **200 OK** and the file content.
+### Upstream forwarding
+- Opens fresh TCP connection per request (HTTP/1.0, `Connection: close`)
+- Rewrites request: `GET <path> HTTP/1.0\r\nHost: <hostname>\r\n...`
+- Sets `Accept-Encoding: identity` to prevent compressed responses the proxy cannot decode
+- Custom `User-Agent: CSE310-Proxy`
 
 ---
 
-## Part B: Proxy Server
+## Build & run
 
-### How It Works
+Requires Python 3. No dependencies to install.
 
-- The proxy server listens on **localhost (127.0.0.1) at port 8888**.
-- It **intercepts and forwards HTTP GET requests** to the destination server.
-- Responses from servers are **cached** in a local `cache/` directory.
-- If a requested page is already cached, the proxy **serves it from cache** instead of requesting it again.
+### Start the web server
 
-### How to Run
+```sh
+python3 webserver.py
+# Listening on http://127.0.0.1:6789/
+```
 
-1. Run the proxy server:
-   ```sh
-   python3 proxyserver.py
-   ```
-2. Configure your web browser to **use a proxy**:
-    - **Proxy Address:** `127.0.0.1`
-    - **Proxy Port:** `8888`
-    - **Ensure HTTPS proxying is disabled** (this proxy only supports HTTP).
-3. Open a browser and visit:
-   ```
-   http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file2.html
-   http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html
-   http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file4.html
-   http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file5.html
-   ```
-   The proxy will fetch and cache the page.
+Fetch a file:
 
-### Testing the Proxy Server
+```sh
+curl -i http://127.0.0.1:6789/HelloWorld.html
+curl -i http://127.0.0.1:6789/png.png -o out.png
+```
 
-- **Basic Test**  
-  Run curl for any of the supported URLs or just visit these sites again:
-  ```sh
-  curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file2.html
-  curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html
-  curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file4.html
-  curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file5.html
-  ```
-  Each command should return the requested webpage. If it is not going through your proxy, you may need to hard refresh
-  your browser to refresh your browsers cache. This is explained right below.
+Missing file returns `404 Not Found` with an HTML body.
 
-- **Checking Cache**
-    - Test caching by running the curl commands multiple times
-    - Verify that subsequent requests are faster (indicating cache usage)
-    - Each URL will have its own cache entry:
-        - `gaia.cs.umass.edu_wireshark-labs_HTTP-wireshark-file1`
-        - `gaia.cs.umass.edu_wireshark-labs_HTTP-wireshark-file2`
-        - `gaia.cs.umass.edu_wireshark-labs_HTTP-wireshark-file3`
-        - `gaia.cs.umass.edu_wireshark-labs_HTTP-wireshark-file4`
+### Start the proxy server
 
-  After the first request, the proxy should serve subsequent requests from the local cache directory.
+```sh
+python3 proxyserver.py
+# Proxy server listening on http://127.0.0.1:8888
+```
 
-### Clearing Cache
+### Route traffic through the proxy
 
-If you want to force the proxy to **fetch a fresh copy**, use:
+**curl:**
 
-- **Google Chrome:** `Ctrl + Shift + R` (Windows/Linux) or `Cmd + Shift + R` (Mac)
-- **Firefox:** `Ctrl + F5` (Windows/Linux) or `Cmd + Shift + R` (Mac)
-- **Edge:** `Ctrl + Shift + R`
-- **Safari:** `Cmd + Option + R`
-- **Using curl:**
-  ```sh
-  curl -x http://127.0.0.1:8888 -H 'Cache-Control: no-cache' http://example.com
-  ```
-  This will **bypass the browser's cache**.
+```sh
+curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file2.html
+curl -x http://127.0.0.1:8888 http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html
+```
 
-## Libraries Used
+**Browser:** configure HTTP proxy = `127.0.0.1`, port = `8888`, disable HTTPS proxying.
 
-**Only standard Python libraries**, and the following were used:
+First request hits the origin and populates `cache/`. Subsequent requests for the same URL are served from cache (check logs for `Cache HIT`).
 
-- `socket` → To create TCP connections for both the web server and proxy server.
-- `os` → To handle file operations for caching and file serving.
-- `mimetypes` → To determine the correct MIME type for HTTP responses.
+### Force a fresh fetch
 
-No external libraries (like Flask) were used.
+```sh
+curl -x http://127.0.0.1:8888 -H 'Cache-Control: no-cache' http://example.com
+```
 
-## Final Notes
+Or delete `cache/` and restart the proxy.
 
-- **Troubleshooting Proxy Cache:** If you encounter cache-related issues, delete the `cache/` directory and restart the
-  proxy server.
-- **Browser Caching Bypass:** To ensure your proxy server is actually processing requests, use a hard refresh:
-    - **Google Chrome:** `Ctrl + Shift + R` (Windows/Linux) or `Cmd + Shift + R` (Mac)
-    - **Firefox:** `Ctrl + F5` (Windows/Linux) or `Cmd + Shift + R` (Mac)
-    - **Microsoft Edge:** `Ctrl + Shift + R`
-    - **Safari:** `Cmd + Option + R`
+---
 
-  A hard refresh forces the browser to bypass its local cache and request the page directly through your proxy server.
+## Architecture
 
-**Prepared by: [Fardin Iqbal]**
+```
+Client (curl / browser)
+   |
+   |  HTTP/1.1 GET
+   v
++--------------------+         +----------------------+
+|  webserver.py      |         |  proxyserver.py      |
+|  127.0.0.1:6789    |         |  127.0.0.1:8888      |
+|                    |         |                      |
+|  recv -> parse ->  |         |  recv -> parse ->    |
+|  resolve file ->   |         |  cache lookup ->     |
+|  mimetype ->       |         |    HIT: serve cached |
+|  200 OK + bytes    |         |    MISS: forward ->  |
+|   (or 404)         |         |      connect :80 ->  |
+|                    |         |      recv -> cache  -|----> origin
++--------------------+         +----------------------+       (port 80)
+```
+
+### Request lifecycle (web server)
+
+1. `accept()` returns new client socket
+2. `recv(1024)` pulls request bytes
+3. Decode UTF-8, split on `\r\n`, tokenize first line
+4. Validate `GET`, extract filename, strip leading `/`
+5. `os.path.exists` + `os.path.isfile` check
+6. Read file in binary mode, detect MIME, build response header
+7. `sendall(header + body)`
+8. Close socket
+
+### Request lifecycle (proxy)
+
+1. `accept()` returns new client socket
+2. `recv(4096)` pulls absolute-URI request
+3. Validate method, reject HTTPS and relative URIs
+4. Split URL into hostname + path, build cache key
+5. **Cache HIT:** read bytes from `cache/<key>`, send to client, done
+6. **Cache MISS:** open socket to `(hostname, 80)`, forward rewritten request, `recv(4096)`, write bytes to `cache/<key>`, send to client
+7. Close both sockets
+
+### Concurrency model
+
+Single-threaded, one request at a time. The accept loop is synchronous — no threading, no `select`, no async. Sufficient for the assignment's scope (local testing, sequential client requests).
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Language | Python 3 |
+| Networking | `socket` (standard library) |
+| File I/O | `os` (standard library) |
+| MIME detection | `mimetypes` (standard library) |
+| External dependencies | None |
+| HTTP parser | Hand-rolled string splitting |
+| Cache storage | Flat files in `cache/` directory |
+
+No Flask, no `http.server`, no `urllib`, no `requests`, no `aiohttp`.
+
+---
+
+## Files
+
+- `webserver.py` — Part A: origin HTTP server (176 lines)
+- `proxyserver.py` — Part B: caching HTTP proxy (218 lines)
+- `HelloWorld.html` — test fixture for the web server
+- `png.png`, `jpeg.jpg` — binary fixtures for MIME/content-length testing
+- `clients_screenshots.pdf` — test case evidence
+
+---
+
+## Academic context
+
+Built for **CSE 310: Computer Networks** at Stony Brook University (Spring 2025). The assignment required implementing the HTTP request/response cycle without any HTTP abstraction libraries — the point was to demonstrate understanding of:
+
+- TCP socket lifecycle (`socket` -> `bind` -> `listen` -> `accept` -> `recv`/`send` -> `close`)
+- HTTP/1.1 wire format (request line, headers, CRLF delimiters, status codes, `Content-Length`)
+- Proxy semantics (absolute URI in request line, `Host` header rewriting, upstream connection handling)
+- Web cache design (key derivation, hit/miss logic, persistence)
+
+Validated against browser traffic (Chrome, Firefox) and `curl` with `-x` proxy flag. Upstream targets included `gaia.cs.umass.edu/wireshark-labs/` — the same HTTP-only pages used in Kurose & Ross Wireshark labs.
+
+---
+
+## License
+
+MIT. See course materials for assignment specification.
+
+Prepared by Fardin Iqbal.
